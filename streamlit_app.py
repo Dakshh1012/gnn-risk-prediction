@@ -1,12 +1,26 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
+# Try to import optional packages with fallbacks
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    st.error("Plotly is not installed. Some visualizations will not be available.")
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    st.warning("PIL (Pillow) is not installed. Images will not be displayed.")
+
 import pickle
 import os
-from PIL import Image
 import base64
 from io import BytesIO
 import warnings
@@ -102,7 +116,7 @@ def load_data():
             try:
                 data[file.replace('.csv', '')] = pd.read_csv(os.path.join(reports_dir, file))
             except Exception as e:
-                st.warning(f"Could not load {file}: {e}")
+                pass  # Silently continue if file can't be loaded
     
     # Load cleaned data if available
     if os.path.exists("data/cleaned/risk_cleaned.csv"):
@@ -110,10 +124,27 @@ def load_data():
     if os.path.exists("data/cleaned/resilience_cleaned.csv"):
         data['resilience_data'] = pd.read_csv("data/cleaned/resilience_cleaned.csv")
     
+    # If no data files available, create demo data
+    if not data:
+        st.info("No data files found. Generating demo data for visualization.")
+        # Create some demo data
+        np.random.seed(42)
+        data['demo_risk'] = pd.DataFrame({
+            'temperature': np.random.normal(25, 5, 100),
+            'humidity': np.random.normal(50, 10, 100),
+            'risk_score': np.random.uniform(5, 20, 100)
+        })
+        data['demo_resilience'] = pd.DataFrame({
+            'resilience_score': np.random.uniform(40, 60, 100),
+            'delay_days': np.random.poisson(2, 100)
+        })
+    
     return data
 
 def load_image_safe(image_path):
     """Safely load an image"""
+    if not PIL_AVAILABLE:
+        return None
     try:
         if os.path.exists(image_path):
             return Image.open(image_path)
@@ -138,6 +169,11 @@ def create_metric_card(title, value, delta=None, delta_color="normal"):
 
 # Load data
 data = load_data()
+
+# Check if we're in demo mode
+demo_mode = 'demo_risk' in data and 'demo_resilience' in data
+if demo_mode:
+    st.info("🚀 Demo Mode: Using simulated data. Run `python main.py` to generate real analysis results.")
 
 # Sidebar
 st.sidebar.markdown('<p class="sidebar-header">Navigation</p>', unsafe_allow_html=True)
@@ -188,45 +224,75 @@ if current_page == "dashboard":
         
         if 'risk_data' in data and 'resilience_data' in data:
             # Create distribution plots
+            if PLOTLY_AVAILABLE:
+                fig = make_subplots(
+                    rows=2, cols=2,
+                    subplot_titles=('Risk Score Distribution', 'Resilience Score Distribution', 
+                                   'Temperature Distribution', 'Delay Days Distribution'),
+                    specs=[[{"secondary_y": False}, {"secondary_y": False}],
+                           [{"secondary_y": False}, {"secondary_y": False}]]
+                )
+                
+                # Risk and resilience distributions
+                if 'risk_score' in data['resilience_data'].columns:
+                    fig.add_trace(
+                        go.Histogram(x=data['resilience_data']['risk_score'], name='Risk Score', 
+                                   opacity=0.7, marker_color='red'),
+                        row=1, col=1
+                    )
+                
+                if 'resilience_score' in data['resilience_data'].columns:
+                    fig.add_trace(
+                        go.Histogram(x=data['resilience_data']['resilience_score'], name='Resilience Score',
+                                   opacity=0.7, marker_color='green'),
+                        row=1, col=2
+                    )
+                
+                if 'temperature' in data['risk_data'].columns:
+                    fig.add_trace(
+                        go.Histogram(x=data['risk_data']['temperature'], name='Temperature',
+                                   opacity=0.7, marker_color='blue'),
+                        row=2, col=1
+                    )
+                
+                if 'Delay_Days' in data['resilience_data'].columns:
+                    fig.add_trace(
+                        go.Histogram(x=data['resilience_data']['Delay_Days'], name='Delay Days',
+                                   opacity=0.7, marker_color='orange'),
+                        row=2, col=2
+                    )
+                
+                fig.update_layout(height=600, showlegend=False, 
+                                title_text="Data Distribution Analysis")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Install plotly to see interactive distribution charts")
+                # Show basic data summary instead
+                if 'risk_score' in data['resilience_data'].columns:
+                    st.write("Risk Score Stats:", data['resilience_data']['risk_score'].describe())
+                if 'resilience_score' in data['resilience_data'].columns:
+                    st.write("Resilience Score Stats:", data['resilience_data']['resilience_score'].describe())
+        elif demo_mode and PLOTLY_AVAILABLE:
+            # Use demo data
             fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=('Risk Score Distribution', 'Resilience Score Distribution', 
-                               'Temperature Distribution', 'Delay Days Distribution'),
-                specs=[[{"secondary_y": False}, {"secondary_y": False}],
-                       [{"secondary_y": False}, {"secondary_y": False}]]
+                rows=1, cols=2,
+                subplot_titles=('Demo Risk Scores', 'Demo Resilience Scores')
             )
             
-            # Risk and resilience distributions
-            if 'risk_score' in data['resilience_data'].columns:
-                fig.add_trace(
-                    go.Histogram(x=data['resilience_data']['risk_score'], name='Risk Score', 
-                               opacity=0.7, marker_color='red'),
-                    row=1, col=1
-                )
+            fig.add_trace(
+                go.Histogram(x=data['demo_risk']['risk_score'], name='Risk Score', 
+                           opacity=0.7, marker_color='red'),
+                row=1, col=1
+            )
             
-            if 'resilience_score' in data['resilience_data'].columns:
-                fig.add_trace(
-                    go.Histogram(x=data['resilience_data']['resilience_score'], name='Resilience Score',
-                               opacity=0.7, marker_color='green'),
-                    row=1, col=2
-                )
+            fig.add_trace(
+                go.Histogram(x=data['demo_resilience']['resilience_score'], name='Resilience Score',
+                           opacity=0.7, marker_color='green'),
+                row=1, col=2
+            )
             
-            if 'temperature' in data['risk_data'].columns:
-                fig.add_trace(
-                    go.Histogram(x=data['risk_data']['temperature'], name='Temperature',
-                               opacity=0.7, marker_color='blue'),
-                    row=2, col=1
-                )
-            
-            if 'Delay_Days' in data['resilience_data'].columns:
-                fig.add_trace(
-                    go.Histogram(x=data['resilience_data']['Delay_Days'], name='Delay Days',
-                               opacity=0.7, marker_color='orange'),
-                    row=2, col=2
-                )
-            
-            fig.update_layout(height=600, showlegend=False, 
-                            title_text="Data Distribution Analysis")
+            fig.update_layout(height=400, showlegend=False, 
+                            title_text="Demo Data Distribution")
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Run the main pipeline to generate data distributions")
@@ -310,11 +376,14 @@ elif current_page == "data_overview":
                 vif_data = data['risk_vif_audit']
                 
                 # Create VIF visualization
-                fig = px.bar(vif_data.head(10), x='VIF', y='Feature', 
-                           orientation='h', title='Top 10 VIF Scores (Risk Data)',
-                           color='VIF', color_continuous_scale='Reds')
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                if PLOTLY_AVAILABLE:
+                    fig = px.bar(vif_data.head(10), x='VIF', y='Feature', 
+                               orientation='h', title='Top 10 VIF Scores (Risk Data)',
+                               color='VIF', color_continuous_scale='Reds')
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.dataframe(vif_data.head(10))
             else:
                 st.info("VIF analysis not available")
         
@@ -324,11 +393,14 @@ elif current_page == "data_overview":
                 vif_data = data['resilience_vif_audit']
                 
                 # Create VIF visualization
-                fig = px.bar(vif_data.head(10), x='VIF', y='Feature', 
-                           orientation='h', title='Top 10 VIF Scores (Resilience Data)',
-                           color='VIF', color_continuous_scale='Blues')
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                if PLOTLY_AVAILABLE:
+                    fig = px.bar(vif_data.head(10), x='VIF', y='Feature', 
+                               orientation='h', title='Top 10 VIF Scores (Resilience Data)',
+                               color='VIF', color_continuous_scale='Blues')
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.dataframe(vif_data.head(10))
             else:
                 st.info("VIF analysis not available")
 
@@ -344,13 +416,15 @@ elif current_page == "model_performance":
             st.dataframe(data['model_comparison_summary'], use_container_width=True)
             
             # Model performance visualization
-            if 'accuracy' in data['model_comparison_summary'].columns:
+            if 'accuracy' in data['model_comparison_summary'].columns and PLOTLY_AVAILABLE:
                 fig = px.bar(data['model_comparison_summary'], 
                            x='Model', y='accuracy', 
                            title='Model Accuracy Comparison',
                            color='accuracy',
                            color_continuous_scale='Viridis')
                 st.plotly_chart(fig, use_container_width=True)
+            elif 'accuracy' in data['model_comparison_summary'].columns:
+                st.bar_chart(data['model_comparison_summary'].set_index('Model')['accuracy'])
         else:
             st.info("Model comparison data not available. Run the pipeline to generate results.")
     
@@ -561,19 +635,25 @@ elif current_page == "feature_analysis":
                 numeric_cols = data['risk_data'].select_dtypes(include=[np.number]).columns
                 selected_feature = st.selectbox("Select Feature", numeric_cols)
                 
-                fig = px.histogram(data['risk_data'], x=selected_feature, 
-                                 title=f'Distribution of {selected_feature}',
-                                 marginal="box")
-                st.plotly_chart(fig, use_container_width=True)
+                if PLOTLY_AVAILABLE:
+                    fig = px.histogram(data['risk_data'], x=selected_feature, 
+                                     title=f'Distribution of {selected_feature}',
+                                     marginal="box")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.hist_chart(data['risk_data'][selected_feature])
                 
             elif dataset_choice == "Resilience Data" and 'resilience_data' in data:
                 numeric_cols = data['resilience_data'].select_dtypes(include=[np.number]).columns
                 selected_feature = st.selectbox("Select Feature", numeric_cols)
                 
-                fig = px.histogram(data['resilience_data'], x=selected_feature,
-                                 title=f'Distribution of {selected_feature}',
-                                 marginal="box")
-                st.plotly_chart(fig, use_container_width=True)
+                if PLOTLY_AVAILABLE:
+                    fig = px.histogram(data['resilience_data'], x=selected_feature,
+                                     title=f'Distribution of {selected_feature}',
+                                     marginal="box")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.hist_chart(data['resilience_data'][selected_feature])
         else:
             st.info("Data not available for feature analysis")
 
